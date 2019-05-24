@@ -130,13 +130,14 @@ summary(DonorInfo.clean)
 # create 10 fold cross validation based on patients
 ```{r}
 library(caret)
+set.seed(123)
 fold <- createFolds(DonorInfo.clean$act_demented, k=10)
 cv = rep(0,length(DonorInfo.clean$act_demented))
 for (i in 1:10) {
   cv[fold[[i]]] = i
 }
 DonorInfo.clean['cv'] = cv
-table(DonorInfo.clean$cv)
+table(cv)
 ```
 
 
@@ -234,15 +235,27 @@ data.final[1:5, 1:10]
 
 ```
 
+6. split feature, cv index and labels
 ```{r}
+dim(data.final)
 # save cv info
 cv.377 <- data.final['cv']
 
 # save y values
 y <- as.matrix(data.final['act_demented'])
+
+data.final$cv = NULL
+data.final$act_demented = NULL
+which(colnames(data.final)=="act_demented")
+which(colnames(data.final)=="cv")
+dim(data.final)
 ```
 
 ## feature filtering
+
+data.final - all feature columns (without cv and y)
+cv.377 - 10 folds cross-validation index
+y - labels
 
 1. remove features with more than 250 0s. 
 ```{r}
@@ -269,42 +282,33 @@ colnames(data.filter1)[lowcorind[1:20]]
 
 3. remove features with t test by class
 ```{r}
-y.ind = which(names(data.filter2)=='act_demented')
-data.byClass <- split(data.filter2[, -y.ind], data.filter2$act_demented)
+data.byClass <- split(data.filter2, y)
 
 feature.pvalues <- c()
-for(i in 1:(ncol(data.filter2)-1)) {
+for(i in 1:(ncol(data.filter2))) {
   feature.pvalues <- c(feature.pvalues, t.test(data.byClass[[1]][,i], data.byClass[[2]][,i])$p.value)
 }
 
-names(feature.pvalues) <- colnames(data.filter2[, -y.ind])
+names(feature.pvalues) <- colnames(data.filter2)
 
 ttest.filter.ind <- which(feature.pvalues>0.05)
 
-data.filter3 <- data.filter2[, -y.ind][, -ttest.filter.ind]
+data.filter3 <- data.filter2[, -ttest.filter.ind]
 dim(data.filter3)
 ```
 
-```{r}
-which(colnames(data.filter3)=="act_demented")
-which(colnames(data.filter3)=="cv")
-```
-
-
+4. PCA
 ```{r}
 data.numeric <- data.filter3
 data.pca.scale <- prcomp(data.numeric, scale = T)
 # biplot(data.pca.scale, cex = 0.5)
-```
 
-
-```{r}
 pca.df <- as.data.frame(data.pca.scale$x)
 pca.df['label']=as.factor(y)
 ggplot(pca.df, aes(PC1, PC2, colour = label)) + geom_point() 
 ```
 
-
+5. PCA variance explained
 ```{r}
 tot.var <- sum(data.pca.scale$sdev^2)
 var.explained <- data.frame(pc = seq(1:length(data.pca.scale$sdev)), var.explained  = data.pca.scale$sdev^2/tot.var ) 
@@ -347,7 +351,7 @@ max(lr.acc.test.pc)
 ```
 
 
-
+## Appendix
 
 ```{r}
 library(Rtsne)
