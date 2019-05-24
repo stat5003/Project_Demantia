@@ -267,18 +267,21 @@ dim(data.filter2)
 colnames(data.filter1)[lowcorind[1:20]]
 ```
 
-3. remove features with t test
+3. remove features with t test by class
 ```{r}
-# perform a t-test
+y.ind = which(names(data.filter2)=='act_demented')
+data.byClass <- split(data.filter2[, -y.ind], data.filter2$act_demented)
+
 feature.pvalues <- c()
-for(i in 1:(ncol(data.filter2))) {
-  feature.pvalues <- c(feature.pvalues, t.test(data.filter2[,i], y)$p.value)
+for(i in 1:(ncol(data.filter2)-1)) {
+  feature.pvalues <- c(feature.pvalues, t.test(data.byClass[[1]][,i], data.byClass[[2]][,i])$p.value)
 }
-names(feature.pvalues) <- colnames(data.filter2)
 
-ttest.filter.ind <- which(feature.pvalues<0.05)
+names(feature.pvalues) <- colnames(data.filter2[, -y.ind])
 
-data.filter3 <- data.filter2[, -ttest.filter.ind]
+ttest.filter.ind <- which(feature.pvalues>0.05)
+
+data.filter3 <- data.filter2[, -y.ind][, -ttest.filter.ind]
 dim(data.filter3)
 ```
 
@@ -288,11 +291,13 @@ which(colnames(data.filter3)=="cv")
 ```
 
 
-```{r warning = FALSE}
+```{r}
 data.numeric <- data.filter3
 data.pca.scale <- prcomp(data.numeric, scale = T)
 # biplot(data.pca.scale, cex = 0.5)
 ```
+
+
 ```{r}
 pca.df <- as.data.frame(data.pca.scale$x)
 pca.df['label']=as.factor(y)
@@ -301,7 +306,6 @@ ggplot(pca.df, aes(PC1, PC2, colour = label)) + geom_point()
 
 
 ```{r}
-library(ggplot2)
 tot.var <- sum(data.pca.scale$sdev^2)
 var.explained <- data.frame(pc = seq(1:length(data.pca.scale$sdev)), var.explained  = data.pca.scale$sdev^2/tot.var ) 
 ggplot(var.explained, aes(pc, var.explained)) + geom_point()+ ggtitle("variance explained vs pc")
@@ -313,7 +317,7 @@ ggplot(var.explained, aes(pc, cumsum(var.explained))) + geom_point()+ ggtitle("c
 lr.acc.train.pc <- c()
 lr.acc.test.pc <- c()
 
-for (pc in seq(30,300, length=100)) {
+for (pc in seq(30,300, length=10)) {
   lr.acc.train <- c()
   lr.acc.test <- c()
   for(i in 1:length(fold)){
