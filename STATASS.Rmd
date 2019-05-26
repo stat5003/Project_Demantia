@@ -1,6 +1,6 @@
 ---
 title: "STAT5003Assignment1"
-author: "Zezheng Zhang"
+author: "Group 10"
 date: "26/04/2019"
 output: html_document
 ---
@@ -13,7 +13,7 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-## Initialize
+### Initialize
 ```{r}
 library(ggplot2)
 theme_update(plot.title = element_text(hjust = 0.5))
@@ -66,8 +66,8 @@ multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
 ```
 
 ## Exploratory data analysis
-### Clean Data
-#### DonorInfo
+### Data Cleaning
+#### DonorInfo data
 1. Load DonorInfo and drop columns
 
 ```{r}
@@ -121,13 +121,14 @@ DonorInfo.clean$act_demented <- as.numeric(DonorInfo$act_demented)-1
 
 ```
 
-3. Check cleaned data
+3. Check cleaned donor data information. Every feature is numerical. 
 
 ```{r}
 summary(DonorInfo.clean)
 ```
 
-# create 10 fold cross validation based on patients
+4. create 10 fold cross validation based on patients and append the cross fold validation as a column in the dataframe for merging purposes. The integer number from 1 to 10 represents its correpsonding cross validation group of the row. 
+
 ```{r}
 library(caret)
 fold <- createFolds(DonorInfo.clean$act_demented, k=10)
@@ -140,8 +141,8 @@ table(DonorInfo.clean$cv)
 ```
 
 
-#### ProteinInfo
-1. Load ProteinInfo and remove redundant columns
+#### ProteinInfo data
+1. Load ProteinInfo and remove redundant columns including donor_name and structure_acronym.
 
 ```{r}
 ProteinInfo.raw <- read.csv("ProteinAndPathologyQuantifications.csv", header = TRUE, sep = ",", encoding = "UTF-8")
@@ -149,6 +150,8 @@ head(ProteinInfo.raw)
 ProteinInfo <- ProteinInfo.raw[,c(-2,-4)]
 head(ProteinInfo)
 ```
+
+2. Check how many NAs are present in the Protein information dataframe. Plot the density of the features and we found that most of the features are skews to left (negatively skewed). Median value of are used to impute the NAs. There is one column with more than half values are NAs, which is "isoprostane_pg_per_mg". The column is removed from the dataframe. 
 
 ```{r}
 colSums(is.na(ProteinInfo))
@@ -168,18 +171,18 @@ for (i in seq(ncol(ProteinInfo))) {
 #remove the column with 239 N/A
 ProteinInfo1 <- ProteinInfo[,-which(colnames(ProteinInfo)=="isoprostane_pg_per_mg")]
 
-colSums(is.na(ProteinInfo1))
+sum(colSums(is.na(ProteinInfo1)))
 ```
 
-#merge ProteinInfo with DonorInfo
+3. Merge ProteinInfo with DonorInfo on "donor_id"
 
 ```{r}
 data1 <- merge(x = DonorInfo.clean, y = ProteinInfo1, by = "donor_id", all = TRUE)
 head(data1)
 ```
 
-#### FPKM with column sample information
-1. read csv
+#### FPKM and column-sample data
+1. Load FPKM data and columns-samples data
 
 ```{r}
 colsamp <- read.csv("columns-samples.csv", header = TRUE, sep = ",", encoding = "UTF-8")
@@ -192,14 +195,14 @@ fpkm[1:5,1:10]
 #summary(colsamp[colsamp$structure_name=='temporal neocortex',]$structure_color)
 ```
 
-2. remove redundant ids in colsamp
+2. Remove redundant columns in colsamp. There are only 3 features important in the dataframe which are: "rnaseq_profile_id", "donor_id" and "structure_id".
 
 ```{r}
 colsamp <- colsamp[,c(1,2,8)]
 head(colsamp)
 ```
 
-3. merge colsamp with data1
+3. merge colsamp with data1 on "donor_id" + "structure_id"
 
 ```{r}
 data2 <- merge(x = colsamp, y = data1, by = c("donor_id", "structure_id"))
@@ -221,7 +224,7 @@ colnames(fpkm1)<-paste("X", fpkm[,1], sep = "")
 fpkm1[1:5, 1:10]
 ```
 
-5. combine fpkm1 with data2.new to produce data.final
+5. combine fpkm1 with data2.new to produce data.final which is the final data with 377 rows.
 
 ```{r}
 data3 <- cbind(data2.new, fpkm1)
@@ -234,26 +237,22 @@ data.final[1:5, 1:10]
 
 ```
 
-```{r}
-#plot(density(rowSums(fpkm1==0)))
-#plot(density(colSums(fpkm1==0)))
-#plot((rowSums(fpkm1==0)))
-#plot(sort(colSums(fpkm1==0)))
-#((rowSums(fpkm1==0)))
-#((colSums(fpkm1==0)))
-```
+
+## feature filtering
+
+Save cv and y values before filtering steps for later stage usage
 
 ```{r}
 # save cv info
 cv.377 <- data.filter1['cv']
-
 # save y values
 y <- as.matrix(data.filter1['act_demented'])
 ```
 
-## feature filtering
+1. remove columns with more than 250 0s. 
+The dimension of the filtered data has been reduced from over 50000 to 35193.
+About 1.5k features are removed using this rule.
 
-1. remove features with more than 250 0s. 
 ```{r}
 # Check if there is any 0 columns
 ind.zero <- which(colSums(dataF==0)>250)
@@ -262,63 +261,46 @@ sum(colSums(dataFF)==0)
 dim(data.filter1)
 ```
 
-2. remove features with less than 0.001 correaltion with y 
-```{r}
-# correlation with y
-feature.cor <- cor(data.filter1, y)
-lowcorind <- which(abs(feature.cor)<0.01)
-data.filter2 <- data.filter1[,-lowcorind]
+2. remove features using t test
+Sepearte the data by its class "act_demented" and conduct a t test for each feature separated by class. If the p-value is small, it means the positive class and negative class are very different. It indicates that the feature is relatively more 'informative'. Filtering the features using the p-value. Features with p-values greater than 0.05 are removed. 
 
-# dimension of the filtered data
-dim(data.filter2)
-
-# sample of filtered feature names
-colnames(data.filter1)[lowcorind[1:20]]
-```
-
-3. remove features with t test
 ```{r}
 # perform a t-test
-y.ind = which(names(data.filter2)=='act_demented')
+y.ind = which(names(data.filter1)=='act_demented')
 
-data.byClass <- split(data.filter2[, -y.ind], data.filter2$act_demented)
+data.byClass <- split(data.filter1[, -y.ind], data.filter1$act_demented)
 
 feature.pvalues <- c()
-for(i in 1:(ncol(data.filter2)-1)) {
+for(i in 1:(ncol(data.filter1)-1)) {
   feature.pvalues <- c(feature.pvalues, t.test(data.byClass[[1]][,i], data.byClass[[2]][,i])$p.value)
 }
 
-names(feature.pvalues) <- colnames(data.filter2[, -y.ind])
+names(feature.pvalues) <- colnames(data.filter1[, -y.ind])
 
 ttest.filter.ind <- which(feature.pvalues>0.05)
 
-data.filter3 <- data.filter2[, -y.ind][, -ttest.filter.ind]
-dim(data.filter3)
+data.filter2 <- data.filter1[, -y.ind][, -ttest.filter.ind]
+dim(data.filter2)
 ```
+
+#### check that cv and y columns are removed from data
 
 ```{r}
-which(colnames(data.filter3)=="act_demented")
-which(colnames(data.filter3)=="cv")
+which(colnames(data.filter2)=="act_demented")
+which(colnames(data.filter2)=="cv")
 ```
+
+## Clustering 
+### PCA
 
 ```{r}
-data.numeric <- data.filter3
-# library(Rtsne)
-# data.Rtsne <- Rtsne(data.numeric)
-# data.Rtsne.df <- data.frame(dim1 = data.Rtsne$Y[,1], dim2 = data.Rtsne$Y[,2], labels = as.factor(y))
-# p1 <- ggplot(data.Rtsne.df, aes(dim1, dim2, col = labels)) + geom_point() + ggtitle("Perplexity = 30")
-# p1
-```
+data.numeric <- data.filter2
 
-```{r warning = FALSE}
 data.pca.scale <- prcomp(data.numeric, scale = T)
-# biplot(data.pca.scale, cex = 0.5)
-```
 
-```{r}
 pca.df <- as.data.frame(data.pca.scale$x)
 pca.df['label']=as.factor(y)
-ggplot(pca.df, aes(PC1, PC2, colour = label)) + geom_point() 
+ggplot(pca.df, aes(PC1, PC2, colour = label)) + geom_point() + ggtitle("PC2 vs PC1 by class")
 ```
 
 
@@ -326,21 +308,24 @@ ggplot(pca.df, aes(PC1, PC2, colour = label)) + geom_point()
 library(ggplot2)
 tot.var <- sum(data.pca.scale$sdev^2)
 var.explained <- data.frame(pc = seq(1:length(data.pca.scale$sdev)), var.explained  = data.pca.scale$sdev^2/tot.var ) 
-ggplot(var.explained, aes(pc, var.explained)) + geom_point()+ ggtitle("variance explained vs pc")
-ggplot(var.explained, aes(pc, cumsum(var.explained))) + geom_point()+ ggtitle("cumsum var explained vs pc")
+ggplot(var.explained, aes(pc, var.explained)) + geom_point()+ ggtitle("Variance Explained by each PC")
+ggplot(var.explained, aes(pc, cumsum(var.explained))) + geom_point()+ ggtitle("Cumsum Variance Explained vs PC No.")
 ```
 
-```{r}
-acc <- function(y, y.pred){
-  return(sum(y==y.pred)/length(y))
-}
-```
+## Feature Selection and Modelling
 
+#### Logistic Regression on PCs
+#### SVM on PCs
+#### Random Forest on PCs
 
-# logistic regression on PCA
 ```{r warning=FALSE}
 library(e1071)
 library(randomForest)
+
+acc <- function(y, y.pred){
+  return(sum(y==y.pred)/length(y))
+}
+
 
 lr.acc.train.pc <- c()
 lr.acc.val.pc <- c()
@@ -409,7 +394,102 @@ pc.no[which.max(rf.acc.val.pc)]
 max(rf.acc.val.pc)
 ```
 
-# forward wrapper approach to select the best combination of PCs
+#### Feature selection using t-test and p-value
+
+```{r}
+data.byClass <- split(data.numeric, y)
+
+feature.pvalues <- c()
+for(i in 1:(ncol(data.numeric))) {
+  feature.pvalues <- c(feature.pvalues, t.test(data.byClass[[1]][,i], data.byClass[[2]][,i])$p.value)
+}
+
+names(feature.pvalues) <- colnames(data.numeric)
+
+ttest.feature.ind.ordered = order(feature.pvalues)
+
+data.ttest <- data.numeric[,ttest.feature.ind.ordered]
+
+data.ttest['label'] = as.factor(y)
+```
+
+
+#### Logistic Regression using features selected by t-test
+
+```{r}
+y.ind = which(names(data.ttest)=='label')
+feature.no <- seq(1,20)
+
+lr.acc.train.t <- c()
+lr.acc.val.t <- c()
+svm.acc.train.t <- c()
+svm.acc.val.t <- c()
+rf.acc.train.t <- c()
+rf.acc.val.t <- c()
+
+
+for (f in feature.no) {
+  lr.acc.train <- c()
+  lr.acc.val <- c()
+  svm.acc.train <- c()
+  svm.acc.val <- c()
+  rf.acc.train <- c()
+  rf.acc.val <- c()
+  
+  for(i in 1:length(fold)){
+    train.df = pca.df[!cv.377==i, c(seq(1,f),16836)]
+    val.df = pca.df[cv.377==i, c(seq(1,f),16836)]
+    y.ind = which(names(train.df)=='label')
+    
+    logistic.model <- glm(label ~ .  , data = train.df, family = binomial(link = 'logit'))
+    lr.pred.train <- ifelse(predict(logistic.model, train.df) > 0.5, 1, 0)
+    lr.pred.val <- ifelse(predict(logistic.model, val.df) > 0.5, 1, 0)
+    lr.acc.train <- c(lr.acc.train, acc(lr.pred.train, train.df[,y.ind]))
+    lr.acc.val <- c(lr.acc.val, acc(lr.pred.val, val.df[,y.ind]))
+    
+    svm.model <- svm(x=train.df[,-y.ind], y=train.df[,y.ind],  kernel="linear", type="C-classification", cost = 1)
+    svm.pred.train <- predict(svm.model, train.df[,-y.ind])
+    svm.pred.val <- predict(svm.model, val.df[,-y.ind])
+    svm.acc.train <- c(svm.acc.train, acc(svm.pred.train, train.df[,y.ind]))
+    svm.acc.val <- c(svm.acc.val, acc(svm.pred.val, val.df[,y.ind]))
+    
+    rf.model <- randomForest(label ~ ., data=train.df, importance=TRUE, mtry=round(f^0.5))
+    rf.pred.train <- predict(rf.model, train.df)
+    rf.pred.val <- predict(rf.model, val.df)
+    rf.acc.train <- c(rf.acc.train, acc(rf.pred.train, train.df[,y.ind]))
+    rf.acc.val <- c(rf.acc.val, acc(rf.pred.val, val.df[,y.ind]))
+    
+  }
+  lr.acc.train.t <- c(lr.acc.train.t, mean(lr.acc.train))
+  lr.acc.val.t <- c(lr.acc.val.t, mean(lr.acc.val))
+  svm.acc.train.t <- c(svm.acc.train.t, mean(svm.acc.train))
+  svm.acc.val.t <- c(svm.acc.val.t, mean(svm.acc.val))
+  rf.acc.train.t <- c(rf.acc.train.t, mean(rf.acc.train))
+  rf.acc.val.t <- c(rf.acc.val.t, mean(rf.acc.val))
+}
+```
+
+
+```{r}
+plot(feature.no, lr.acc.val.t)
+cat('feature no for logistic regression')
+feature.no[which.max(lr.acc.val.t)]
+max(lr.acc.val.t)
+
+plot(feature.no, svm.acc.val.t, type = 'l')
+cat('feature no for linear kernel')
+feature.no[which.max(svm.acc.val.t)]
+max(svm.acc.val.t)
+
+plot(feature.no, rf.acc.val.t)
+cat('feature no for random forest')
+feature.no[which.max(rf.acc.val.t)]
+max(rf.acc.val.t)
+```
+
+
+#### Forward wrapper approach for feature selection
+
 ```{r}
 selectFeature <- function(df, features, mode) {
   ## identify a feature to be selected
@@ -446,55 +526,52 @@ selectFeature <- function(df, features, mode) {
 ```
 
 
+#### Forward stepwise + PCA + Logistic Regression
 
-## Forward stepwise + PCA + Logistic
 ```{r warning=FALSE}
 features.pca.lr <- c('PC1', 'label')
+forward.pca.lr.acc <- c()
 
-lr.forward.acc <- c()
-
-# select the 2 to 10 best features using knn as a wrapper classifier
 for (j in 2:50) {
   ret <- selectFeature(pca.df, features.pca.lr, "lr")
   selected.i <- ret[[1]]
   current.best.acc <- ret[[2]]
   cat(j, selected.i, ': ', current.best.acc, '\n')
 
-  # add the best feature from current run
   features.pca.lr <- c(features.pca.lr, selected.i)
   
-  lr.forward.acc <- c(lr.forward.acc, current.best.acc)
+  forward.pca.lr.acc <- c(forward.pca.lr.acc, current.best.acc)
 }
 
+plot(seq(2,50), forward.pca.lr.acc)
 ```
 
-# PCA + SVM + Forward stepwise
+#### Forward stepwise + PCA + SVM
+
 ```{r}
 features.pca.svm <- c('PC1', 'label')
+forward.pca.svm.acc <- c()
 
-svm.forward.acc <- c()
-
-# select the 2 to 10 best features using knn as a wrapper classifier
 for (j in 2:30) {
   ret <- selectFeature(pca.df, features.pca.svm, "svm")
   selected.i <- ret[[1]]
   current.best.acc <- ret[[2]]
   cat(j, selected.i, ': ', current.best.acc, '\n')
 
-  # add the best feature from current run
   features.pca.svm <- c(features.pca.svm, selected.i)
   
-  svm.forward.acc <- c(svm.forward.acc, current.best.acc)
+  forward.pca.svm.acc <- c(forward.pca.svm.acc, current.best.acc)
 }
 
-plot(seq(2:30), svm.forward.acc)
+plot(seq(2:30), forward.pca.svm.acc)
+
 ```
 
+#### Forward stepwise + t-test + Logistic Regression
 
-# t-test + Logistic + Forward Stepwise
 ```{r}
 features.ttest.lr = c('label', names(data.ttest)[1])
-lr.forward.acc.ttest <- c()
+forward.t.lr.acc <- c()
 
 for (j in 2:30) {
   ret <- selectFeature(data.ttest[,c(seq(1,400),16836)], features.ttest.lr, "lr")
@@ -502,20 +579,20 @@ for (j in 2:30) {
   current.best.acc <- ret[[2]]
   cat(j, selected.i, ': ', current.best.acc, '\n')
 
-  # add the best feature from current run
   features.ttest.lr <- c(features.ttest.lr, selected.i)
   
-  lr.forward.acc.ttest <- c(lr.forward.acc.ttest, current.best.acc)
+  forward.t.lr.acc <- c(forward.t.lr.acc, current.best.acc)
 }
 
-plot(seq(2,30), lr.forward.acc.ttest)
+plot(seq(2,30), forward.t.lr.acc)
 ```
 
-# t-test + SVM + Forward stepwise
+#### Forward stepwise + t-test + SVM
+
 ```{r}
 features.ttest.svm = c('label', names(data.ttest)[1])
 
-svm.forward.acc <- c()
+forward.t.svm.acc <- c()
 
 # select the 2 to 10 best features using knn as a wrapper classifier
 for (j in 2:50) {
@@ -527,197 +604,98 @@ for (j in 2:50) {
   # add the best feature from current run
   features.ttest.svm <- c(features.ttest.svm, selected.i)
   
+  forward.t.svm.acc <- c(forward.t.svm.acc, current.best.acc)
+}
+
+plot(seq(2:50), forward.t.svm.acc)
+
+```
+
+
+
+
+
+
+# Section 2
+## Do gene expression and protein quantification sex dependent?
+
+```{r}
+sex.data <- data.filter1[, -which(colnames(data.filter1) %in% colnames(DonorInfo))]
+sex <- data.filter1$sex
+```
+
+```{r}
+data.sex.byClass <- split(sex.data, sex)
+
+feature.pvalues <- c()
+for(i in 1:(ncol(sex.data))) {
+  feature.pvalues <- c(feature.pvalues, t.test(data.sex.byClass[[1]][,i], data.sex.byClass[[2]][,i])$p.value)
+}
+
+names(feature.pvalues) <- colnames(sex.data)
+
+ttest.filter.ind <- which(feature.pvalues>0.05)
+
+sex.filtered.data <- sex.data[, -ttest.filter.ind]
+dim(sex.filtered.data)
+```
+
+
+```{r}
+pca.sex.data <- prcomp(sex.filtered.data, scale = T)
+
+pca.sex.df <- as.data.frame(pca.sex.data$x)
+pca.sex.df['label']=as.factor(sex)
+ggplot(pca.sex.df, aes(PC1, PC2, colour = label)) + geom_point()
+```
+
+```{r warning=FALSE}
+features.sex.pca.lr <- c('PC1', 'label')
+forward.sex.pca.lr.acc <- c()
+
+for (j in 2:10) {
+  ret <- selectFeature(pca.sex.df, features.sex.pca.lr, "lr")
+  selected.i <- ret[[1]]
+  current.best.acc <- ret[[2]]
+  cat(j, selected.i, ': ', current.best.acc, '\n')
+
+  features.sex.pca.lr <- c(features.sex.pca.lr, selected.i)
+  
+  forward.sex.pca.lr.acc <- c(forward.sex.pca.lr.acc, current.best.acc)
+}
+
+# plot(seq(2,10), forward.sex.pca.lr.acc)
+```
+
+```{r}
+ttest.feature.ind.ordered = order(feature.pvalues)
+data.ttest <- sex.data[,ttest.feature.ind.ordered]
+data.ttest['label'] = as.factor(sex)
+```
+
+# t-test + SVM + Forward stepwise
+```{r}
+features.ttest.svm = c('label')
+
+svm.forward.acc <- c()
+
+# select the 2 to 10 best features using knn as a wrapper classifier
+for (j in 1:3) {
+  ret <- selectFeature(data.ttest[,c(seq(1,400),35188)], features.ttest.svm, "svm")
+  selected.i <- ret[[1]]
+  current.best.acc <- ret[[2]]
+  cat(j, selected.i, ': ', current.best.acc, '\n')
+
+  # add the best feature from current run
+  features.ttest.svm <- c(features.ttest.svm, selected.i)
+  
   svm.forward.acc <- c(svm.forward.acc, current.best.acc)
 }
 
-plot(seq(2:50), svm.forward.acc)
-```
-
-
-
-
-
-
-
-# Rank t-test and order features for selection
-```{r}
-data.byClass <- split(data.numeric, y)
-
-feature.pvalues <- c()
-for(i in 1:(ncol(data.numeric))) {
-  feature.pvalues <- c(feature.pvalues, t.test(data.byClass[[1]][,i], data.byClass[[2]][,i])$p.value)
-}
-
-names(feature.pvalues) <- colnames(data.numeric)
-
-# no small value of t-stats
-ttest.filter.ind <- which(feature.pvalues>0.05)
-
-ttest.feature.ind.ordered = order(feature.pvalues)
-
-data.ttest <- data.numeric[,ttest.feature.ind.ordered]
-data.ttest['label'] = as.matrix(y)
-```
-
-
-## Logistic Regression using ttest filtered features
-```{r warning=FALSE}
-lr.acc.train.t <- c()
-lr.acc.val.t <- c()
-y.ind = which(names(data.ttest)=='label')
-feature.no <- seq(1,20)
-
-for (f in feature.no) {
-  lr.acc.train <- c()
-  lr.acc.val <- c()
-  
-  for(i in 1:length(fold)){
-    train.df = data.ttest[!cv.377==i, c(seq(1,f), 16836)]
-    val.df = data.ttest[cv.377==i, c(seq(1,f), 16836)]
-    y.ind = which(names(train.df)=='label')
-    
-    logistic.model <- glm(label ~ .  , data = train.df, family = binomial(link = 'logit'))
-    lr.pred.train <- ifelse(predict(logistic.model, train.df) > 0.5, 1, 0)
-    lr.pred.val <- ifelse(predict(logistic.model, val.df) > 0.5, 1, 0)
-    lr.acc.train <- c(lr.acc.train, acc(lr.pred.train, train.df[,y.ind]))
-    lr.acc.val <- c(lr.acc.val, acc(lr.pred.val, val.df[,y.ind]))
-  }
-  lr.acc.train.t <- c(lr.acc.train.t, mean(lr.acc.train))
-  lr.acc.val.t <- c(lr.acc.val.t, mean(lr.acc.val))
-}
-```
-
-
-
-
-## SVM linear kernel
-```{r}
-feature.no <- seq(90, 150, length = 10)
-svm.cost <- c(0.001, 0.01, 0.1, 0.3)
-svm.acc.n <- length(svm.cost)
-svm.acc.m <- length(feature.no)
-svm.acc.train.t <- matrix(rep(0, svm.acc.m*svm.acc.n), svm.acc.n, svm.acc.m)
-svm.acc.val.t <- matrix(rep(0, svm.acc.m*svm.acc.n), svm.acc.n, svm.acc.m)
-
-for (f in 1:length(feature.no)) {
-  lr.acc.train <- c()
-  lr.acc.val <- c()
-  svm.acc.train <- c()
-  svm.acc.val <- c()
-  rf.acc.train <- c()
-  rf.acc.val <- c()
-  for (c in 1:length(svm.cost)) {
-    for(i in 1:length(fold)){
-      train.df = data.ttest[!cv.377==i, c(seq(1,feature.no[f]),16836)]
-      val.df = data.ttest[cv.377==i, c(seq(1,feature.no[f]),16836)]
-      y.ind = which(names(train.df)=='label')
-      
-      svm.model <- svm(x=train.df[,-y.ind], y=train.df[,y.ind],  kernel="linear", type="C-classification", cost = svm.cost[c])
-      svm.pred.train <- predict(svm.model, train.df[,-y.ind])
-      svm.pred.val <- predict(svm.model, val.df[,-y.ind])
-      svm.acc.train <- c(svm.acc.train, acc(svm.pred.train, train.df[,y.ind]))
-      svm.acc.val <- c(svm.acc.val, acc(svm.pred.val, val.df[,y.ind]))
-    }
-    svm.acc.train.t[c,f] <- mean(svm.acc.train)
-    svm.acc.val.t[c,f] <- mean(svm.acc.val)
-  }
-}
-```
-
-## SVM radial kernel
-```{r}
-svm.cost <- c(0.01, 0.1, 0.3, 0.7, 1)
-svm.acc.n <- length(svm.cost)
-svm.acc.m <- length(feature.no)
-svm.acc.train.t.radial <- matrix(rep(0, svm.acc.m*svm.acc.n), svm.acc.n, svm.acc.m)
-svm.acc.val.t.radial <- matrix(rep(0, svm.acc.m*svm.acc.n), svm.acc.n, svm.acc.m)
-
-for (f in 1:length(feature.no)) {
-  lr.acc.train <- c()
-  lr.acc.val <- c()
-  svm.acc.train <- c()
-  svm.acc.val <- c()
-  rf.acc.train <- c()
-  rf.acc.val <- c()
-  for (c in 1:length(svm.cost)) {
-    for(i in 1:length(fold)){
-      train.df = data.ttest[!cv.377==i, c(seq(1,feature.no[f]),16836)]
-      val.df = data.ttest[cv.377==i, c(seq(1,feature.no[f]),16836)]
-      y.ind = which(names(train.df)=='label')
-      
-      svm.model <- svm(x=train.df[,-y.ind], y=train.df[,y.ind],  kernel="radial", type="C-classification", cost = svm.cost[c])
-      svm.pred.train <- predict(svm.model, train.df[,-y.ind])
-      svm.pred.val <- predict(svm.model, val.df[,-y.ind])
-      svm.acc.train <- c(svm.acc.train, acc(svm.pred.train, train.df[,y.ind]))
-      svm.acc.val <- c(svm.acc.val, acc(svm.pred.val, val.df[,y.ind]))
-    }
-    svm.acc.train.t.radial[c,f] <- mean(svm.acc.train)
-    svm.acc.val.t.radial[c,f] <- mean(svm.acc.val)
-  }
-}
-```
-
-
-```{r warning=FALSE}
-rf.acc.train.t <- c()
-rf.acc.val.t <- c()
-
-for (f in feature.no) {
-  rf.acc.train <- c()
-  rf.acc.val <- c()
-  
-  for(i in 1:length(fold)){
-    train.df = data.ttest[!cv.377==i, c(seq(1,f),16836)]
-    val.df = data.ttest[cv.377==i, c(seq(1,f),16836)]
-    y.ind = which(names(train.df)=='label')
-    
-    rf.model <- randomForest(label ~ ., data=train.df, importance=TRUE, mtry=round(f^0.5))
-    rf.pred.train <- ifelse(predict(rf.model, train.df)>0.5, 1, 0)
-    rf.pred.val <- ifelse(predict(rf.model, val.df)>0.5, 1, 0)
-    rf.acc.train <- c(rf.acc.train, acc(rf.pred.train, train.df[,y.ind]))
-    rf.acc.val <- c(rf.acc.val, acc(rf.pred.val, val.df[,y.ind]))
-  }
-  
-  rf.acc.train.t <- c(rf.acc.train.t, mean(rf.acc.train))
-  rf.acc.val.t <- c(rf.acc.val.t, mean(rf.acc.val))
-}
-```
-
-
-```{r}
-# plot(feature.no, lr.acc.val.t)
-# cat('feature no for logistic regression')
-# feature.no[which.max(lr.acc.val.t)]
-# max(lr.acc.val.t)
-
-plot(feature.no, svm.acc.val.t[1,], type = 'l')
-lines(feature.no, svm.acc.val.t[2,], col = 'red')
-lines(feature.no, svm.acc.val.t[3,], col = 'blue')
-cat('feature no for linear kernel')
-feature.no[which.max(svm.acc.val.t)/length(svm.cost)+1]
-cat('cost for linear kernal')
-svm.cost[which.max(svm.acc.val.t)%%length(svm.cost)+1]
-max(svm.acc.val.t)
-
-# plot(feature.no, svm.acc.val.t.radial[1,], type = 'l')
-# lines(feature.no, svm.acc.val.t.radial[2,], col = 'red')
-# lines(feature.no, svm.acc.val.t.radial[3,], col = 'blue')
-# cat('feature no for radial kernel')
-# feature.no[which.max(svm.acc.val.t.radial)/length(svm.cost)+1]
-# cat('cost for radial kernal')
-# svm.cost[which.max(svm.acc.val.t.radial)%%length(svm.cost)+1]
-# max(svm.acc.val.t.radial)
-# 
-# 
-# plot(feature.no, rf.acc.val.t)
-# cat('feature no for random forest')
-# feature.no[which.max(rf.acc.val.t)]
-# max(rf.acc.val.t)
+plot(seq(1:3), svm.forward.acc)
 
 ```
 
 
 
 
-
-SEX
