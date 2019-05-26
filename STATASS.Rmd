@@ -217,7 +217,7 @@ head(data2.new)
 
 ```{r}
 fpkm1 <- as.data.frame(t(fpkm))[-1,]
-colnames(fpkm1)<-fpkm[,1]
+colnames(fpkm1)<-paste("X", fpkm[,1], sep = "")
 fpkm1[1:5, 1:10]
 ```
 
@@ -265,7 +265,7 @@ dim(data.filter1)
 2. remove features with less than 0.001 correaltion with y 
 ```{r}
 # correlation with y
-feature.cor <- cor(x, y)
+feature.cor <- cor(data.filter1, y)
 lowcorind <- which(abs(feature.cor)<0.01)
 data.filter2 <- data.filter1[,-lowcorind]
 
@@ -279,15 +279,20 @@ colnames(data.filter1)[lowcorind[1:20]]
 3. remove features with t test
 ```{r}
 # perform a t-test
+y.ind = which(names(data.filter2)=='act_demented')
+
+data.byClass <- split(data.filter2[, -y.ind], data.filter2$act_demented)
+
 feature.pvalues <- c()
-for(i in 1:(ncol(data.filter2))) {
-  feature.pvalues <- c(feature.pvalues, t.test(data.filter2[,i], y)$p.value)
+for(i in 1:(ncol(data.filter2)-1)) {
+  feature.pvalues <- c(feature.pvalues, t.test(data.byClass[[1]][,i], data.byClass[[2]][,i])$p.value)
 }
-names(feature.pvalues) <- colnames(data.filter2)
 
-ttest.filter.ind <- which(feature.pvalues<0.05)
+names(feature.pvalues) <- colnames(data.filter2[, -y.ind])
 
-data.filter3 <- data.filter2[, -ttest.filter.ind]
+ttest.filter.ind <- which(feature.pvalues>0.05)
+
+data.filter3 <- data.filter2[, -y.ind][, -ttest.filter.ind]
 dim(data.filter3)
 ```
 
@@ -296,12 +301,20 @@ which(colnames(data.filter3)=="act_demented")
 which(colnames(data.filter3)=="cv")
 ```
 
+```{r}
+data.numeric <- data.filter3
+# library(Rtsne)
+# data.Rtsne <- Rtsne(data.numeric)
+# data.Rtsne.df <- data.frame(dim1 = data.Rtsne$Y[,1], dim2 = data.Rtsne$Y[,2], labels = as.factor(y))
+# p1 <- ggplot(data.Rtsne.df, aes(dim1, dim2, col = labels)) + geom_point() + ggtitle("Perplexity = 30")
+# p1
+```
 
 ```{r warning = FALSE}
-data.numeric <- data.filter3
 data.pca.scale <- prcomp(data.numeric, scale = T)
 # biplot(data.pca.scale, cex = 0.5)
 ```
+
 ```{r}
 pca.df <- as.data.frame(data.pca.scale$x)
 pca.df['label']=as.factor(y)
@@ -317,209 +330,394 @@ ggplot(var.explained, aes(pc, var.explained)) + geom_point()+ ggtitle("variance 
 ggplot(var.explained, aes(pc, cumsum(var.explained))) + geom_point()+ ggtitle("cumsum var explained vs pc")
 ```
 
+```{r}
+acc <- function(y, y.pred){
+  return(sum(y==y.pred)/length(y))
+}
+```
+
+
 # logistic regression on PCA
 ```{r warning=FALSE}
-lr.acc.train.pc <- c()
-lr.acc.test.pc <- c()
+library(e1071)
+library(randomForest)
 
-for (pc in seq(30,300, length=100)) {
+lr.acc.train.pc <- c()
+lr.acc.val.pc <- c()
+
+svm.acc.train.pc <- c()
+svm.acc.val.pc <- c()
+
+rf.acc.train.pc <- c()
+rf.acc.val.pc <- c()
+
+pc.no <- seq(10,370,60)
+
+for (pc in pc.no) {
   lr.acc.train <- c()
-  lr.acc.test <- c()
+  lr.acc.val <- c()
+  svm.acc.train <- c()
+  svm.acc.val <- c()
+  rf.acc.train <- c()
+  rf.acc.val <- c()
+  
   for(i in 1:length(fold)){
-    train.df = pca.df[!cv==i, c(seq(1,pc),378)]
-    val.df = pca.df[cv==i, c(seq(1,pc),378)]
+    train.df = pca.df[!cv.377==i, c(seq(1,pc),378)]
+    val.df = pca.df[cv.377==i, c(seq(1,pc),378)]
     y.ind = which(names(train.df)=='label')
     
     logistic.model <- glm(label ~ .  , data = train.df, family = binomial(link = 'logit'))
-    
-    # use fitted value to classify samples
     lr.pred.train <- ifelse(predict(logistic.model, train.df) > 0.5, 1, 0)
-    lr.acc.train <- c(lr.acc.train, sum(lr.pred.train == train.df[,y.ind]) / nrow(train.df))
+    lr.pred.val <- ifelse(predict(logistic.model, val.df) > 0.5, 1, 0)
+    lr.acc.train <- c(lr.acc.train, acc(lr.pred.train, train.df[,y.ind]))
+    lr.acc.val <- c(lr.acc.val, acc(lr.pred.val, val.df[,y.ind]))
     
-    lr.pred.test <- ifelse(predict(logistic.model, val.df) > 0.5, 1, 0)
-    lr.acc.test <- c(lr.acc.test, sum(lr.pred.test == val.df[,y.ind]) / nrow(val.df))
+    svm.model <- svm(x=train.df[,-y.ind], y=train.df[,y.ind],  kernel="linear", type="C-classification", cost = 1)
+    svm.pred.train <- predict(svm.model, train.df[,-y.ind])
+    svm.pred.val <- predict(svm.model, val.df[,-y.ind])
+    svm.acc.train <- c(svm.acc.train, acc(svm.pred.train, train.df[,y.ind]))
+    svm.acc.val <- c(svm.acc.val, acc(svm.pred.val, val.df[,y.ind]))
+    
+    rf.model <- randomForest(label ~ ., data=train.df, importance=TRUE)
+    rf.pred.train <- predict(rf.model, train.df)
+    rf.pred.val <- predict(rf.model, val.df)
+    rf.acc.train <- c(rf.acc.train, acc(rf.pred.train, train.df[,y.ind]))
+    rf.acc.val <- c(rf.acc.val, acc(rf.pred.val, val.df[,y.ind]))
+    
   }
   lr.acc.train.pc <- c(lr.acc.train.pc, mean(lr.acc.train))
-  lr.acc.test.pc <- c(lr.acc.test.pc, mean(lr.acc.test))
+  lr.acc.val.pc <- c(lr.acc.val.pc, mean(lr.acc.val))
+  svm.acc.train.pc <- c(svm.acc.train.pc, mean(svm.acc.train))
+  svm.acc.val.pc <- c(svm.acc.val.pc, mean(svm.acc.val))
+  rf.acc.train.pc <- c(rf.acc.train.pc, mean(rf.acc.train))
+  rf.acc.val.pc <- c(rf.acc.val.pc, mean(rf.acc.val))
 }
 
 ```
 
 ```{r}
-plot(lr.acc.test.pc)
-which.max(lr.acc.test.pc)
-max(lr.acc.test.pc)
+plot(pc.no, lr.acc.val.pc)
+pc.no[which.max(lr.acc.val.pc)]
+max(lr.acc.val.pc)
+
+plot(pc.no, svm.acc.val.pc)
+pc.no[which.max(svm.acc.val.pc)]
+max(svm.acc.val.pc)
+
+plot(pc.no, rf.acc.val.pc)
+pc.no[which.max(rf.acc.val.pc)]
+max(rf.acc.val.pc)
 ```
 
-
-
-
+# forward wrapper approach to select the best combination of PCs
 ```{r}
-library(Rtsne)
-data.Rtsne <- Rtsne(data.numeric)
-data.Rtsne.df <- data.frame(dim1 = data.Rtsne$Y[,1], dim2 = data.Rtsne$Y[,2], labels = as.factor(y))
-p1 <- ggplot(data.Rtsne.df, aes(dim1, dim2, col = labels)) + geom_point() + ggtitle("Perplexity = 30")
-p1
+selectFeature <- function(df, features, mode) {
+  ## identify a feature to be selected
+  current.best.accuracy <- -Inf
+  selected.i <- NULL
+  for(i in 1:(ncol(df)-1)) {
+    current.f <- colnames(df)[i]
+    if(!current.f %in% features) {
+      test.acc = rep(0,10)
+      for(cv in 1:length(fold)){
+        train = df[!cv.377==cv, c(features, current.f)]
+        test = df[cv.377==cv, c(features, current.f)]
+        
+        if(mode == "svm"){
+          y.ind = which(colnames(train)=='label')
+          svm.model <- svm(x=train[,-y.ind], y=train[,y.ind],  kernel="linear", type="C-classification", cost = 0.1)
+          model <- predict(svm.model, test[,-y.ind])
+        }
+        else if(mode == "lr"){
+          logistic.model <- glm(label ~ .  , data = train, family = binomial(link = 'logit'))
+          model <- ifelse(predict(logistic.model, test) > 0.5, 1, 0)
+        }
+        
+        test.acc[cv] <- acc(test$label, model)
+      }
+      if(mean(test.acc) > current.best.accuracy) {
+        current.best.accuracy <- mean(test.acc)
+        selected.i <- colnames(df)[i]
+      }
+    }
+  }
+  return(list(selected.i, current.best.accuracy))
+}
 ```
 
 
-```{r}
-x.pca <- data.pca.scale$x
-# y <- y
-```
 
-
-### Ridge regression
-```{r}
-library(glmnet)
-# set the range of lambda values to be tested.
-grid <- 10^seq(8,-2, length=100)
-
-ridge.mod <- glmnet(x.pca, as.matrix(y), alpha=0, lambda=grid, standardize = TRUE)
-dim(coef(ridge.mod))
-plot(ridge.mod, xvar="lambda", label=TRUE)
-set.seed(1)
-cv.out <- cv.glmnet(x.pca, as.matrix(y), alpha=0)
-plot(cv.out)
-bestlam.ridge <- cv.out$lambda.min 
-bestlam.ridge
-```
-
-### Lasso regression
-```{r}
-## Lasso model 
-lasso.mod <- glmnet(x, y, alpha=1, lambda=grid)
-dim(coef(lasso.mod))
-plot(lasso.mod, "lambda", label=TRUE)
-
-set.seed (1)
-# Using cross-validation for Lasso to find the best lambda (based on cvm "mean cross-validated error")
-cv.lasso <- cv.glmnet (x, y, alpha=1)
-plot(cv.lasso)
-bestlam.lasso <- cv.lasso$lambda.min
-
-```
-
-```{r}
-# Ridge for feature selection?
-ridge.coef <- predict(ridge.mod, type="coefficients", s=bestlam.ridge)[1:50,]
-#sort(abs(ridge.coef), decreasing = T)[1:10]
-ridge.coef
-
-# Lasso for feature selection
-lasso.coef=predict(lasso.mod, type="coefficients", s=bestlam.lasso)
-#sort(abs(lasso.coef), decreasing = T)[1:10]
-colnames(x)[which(lasso.coef!=0)]
-
-```
-
-
-## logistic regression
+## Forward stepwise + PCA + Logistic
 ```{r warning=FALSE}
-lr.acc.train <- vector()
-lr.acc.test <- vector()
-for(i in 1:length(fold)){
-  logistic.model <- glm(y ~ .  , data = train.df[fold[[i]],], family = binomial(link = 'logit'))
-  # use fitted value to classify samples
-  lr.pred.train <- ifelse(predict(logistic.model, train.df[,-1]) > 0.5, 1, 0)
-  # calculate classification accuracy (in percentage %)
-  lr.acc.train[i] <- sum(logit.decision == y.train) / nrow(train.df) * 100
+features.pca.lr <- c('PC1', 'label')
+
+lr.forward.acc <- c()
+
+# select the 2 to 10 best features using knn as a wrapper classifier
+for (j in 2:50) {
+  ret <- selectFeature(pca.df, features.pca.lr, "lr")
+  selected.i <- ret[[1]]
+  current.best.acc <- ret[[2]]
+  cat(j, selected.i, ': ', current.best.acc, '\n')
+
+  # add the best feature from current run
+  features.pca.lr <- c(features.pca.lr, selected.i)
   
-  lr.pred.test <- ifelse(predict(logistic.model, test.df[,-1]) > 0.5, 1, 0)
-  lr.acc.test[i] <- sum(lr.pred.test == y.test) / length(y.test) * 100
+  lr.forward.acc <- c(lr.forward.acc, current.best.acc)
 }
 
-mean(lr.acc.train)
-mean(lr.acc.test)
 ```
 
-
-## linear model 
-not appropriate for classification
-```{r warning=FALSE}
-
-linear.acc.train <- vector()
-linear.acc.test <- vector()
-for(i in 1:length(fold)){
-  linear.model <- lm(y ~ .  , data = train.df[fold[[i]],])
-  # summary(linear.model)
-  linear.pred.train <- ifelse(predict(linear.model, train.df[,-1]) > 0.5, 1, 0)
-  linear.acc.train[i] <- sum(logit.decision == y.train) / nrow(train.df) * 100
-  
-  linear.pred.test <- ifelse(predict(linear.model, test.df[,-1]) > 0.5, 1, 0)
-  linear.acc.test[i] <- sum(linear.pred.test == y.test) / length(y.test) * 100
-}
-
-mean(linear.acc.train)
-mean(linear.acc.test)
-```
-
-## knn
+# PCA + SVM + Forward stepwise
 ```{r}
-library(class)
+features.pca.svm <- c('PC1', 'label')
 
-knn.acc.train <- vector()
-knn.acc.test <- vector()
+svm.forward.acc <- c()
 
-for(i in 1:length(fold)){
-  knn.pred.train <- knn(train.df[fold[[i]],-1], train.df[fold[[i]],-1], train.df[fold[[i]],]$y, k=5)
-  knn.pred.test <- knn(train.df[fold[[i]],-1], test.df[,-1], train.df$y[fold[[i]]], k=5)
-  knn.acc.train[i] <- sum(knn.pred.train == y.train) / nrow(train.df) * 100
-  knn.acc.test[i] <- sum(knn.pred.test == y.test) / nrow(test.df) * 100
-}
+# select the 2 to 10 best features using knn as a wrapper classifier
+for (j in 2:30) {
+  ret <- selectFeature(pca.df, features.pca.svm, "svm")
+  selected.i <- ret[[1]]
+  current.best.acc <- ret[[2]]
+  cat(j, selected.i, ': ', current.best.acc, '\n')
 
-mean(knn.acc.train)
-mean(knn.acc.test)
-```
-
-## lda
-Problem with lda is that it does not take collinear inputs, where in our data it is highly probable in multiple features
-```{r}
-lda.acc.train <- vector()
-lda.acc.test <- vector()
-
-for(i in 1:length(fold)){
-  # Train the lda model 
-  lda.model <- MASS::lda(y ~ .  , data = train.df[fold[[i]],1:30])
-  lda.fitted <- predict(lda.model, train.df[,1:30])$posterior[,2]
-  # use fitted value to classify samples
-  lda.pred.train <- ifelse(lda.fitted > 0.5, 1, 0)
-  # calculate classification accuracy (in percentage %)
-  lda.acc.train[i] <- sum(lda.pred.train == y.train) / length(y.train) * 100
-  lda.pred.test <- ifelse(predict(lda.model, test.df[,1:30])$posterior[,2] > 0.5, 1, 0)
-  lda.acc.test[i] <- sum(lda.pred.test == y.test)/length(y.test) * 100
-}
-
-mean(lda.acc.train)
-mean(lda.acc.test)
-```
-
-## random forest
-```{r warning=FALSE}
-library(randomForest)
-
-set.seed(1)
-
-rf.acc.train <- vector()
-rf.acc.test <- vector()
-
-for(i in 1:length(fold)){
-  # Random forest for classification
-  rf.model <- randomForest(y ~ ., data=train.df[,1:30], importance=TRUE, mtry=1)
-  print(rf.model)
-  rf.model$importance
-  rf.pred.train <- ifelse(rf.model$predicted>0.5, 1, 0)
-  rf.pred.test <- ifelse(predict(rf.model, test.df[,1:30])>0.5, 1, 0) 
+  # add the best feature from current run
+  features.pca.svm <- c(features.pca.svm, selected.i)
   
-  rf.acc.train[i] <- sum(rf.pred.train == y.train) / length(y.train) * 100
-  rf.acc.test[i] <- sum(rf.pred.test == y.test)/length(y.test) * 100
+  svm.forward.acc <- c(svm.forward.acc, current.best.acc)
 }
 
-mean(rf.acc.train)
-mean(rf.acc.test)
+plot(seq(2:30), svm.forward.acc)
+```
+
+
+# t-test + Logistic + Forward Stepwise
+```{r}
+features.ttest.lr = c('label', names(data.ttest)[1])
+lr.forward.acc.ttest <- c()
+
+for (j in 2:30) {
+  ret <- selectFeature(data.ttest[,c(seq(1,400),16836)], features.ttest.lr, "lr")
+  selected.i <- ret[[1]]
+  current.best.acc <- ret[[2]]
+  cat(j, selected.i, ': ', current.best.acc, '\n')
+
+  # add the best feature from current run
+  features.ttest.lr <- c(features.ttest.lr, selected.i)
+  
+  lr.forward.acc.ttest <- c(lr.forward.acc.ttest, current.best.acc)
+}
+
+plot(seq(2,30), lr.forward.acc.ttest)
+```
+
+# t-test + SVM + Forward stepwise
+```{r}
+features.ttest.svm = c('label', names(data.ttest)[1])
+
+svm.forward.acc <- c()
+
+# select the 2 to 10 best features using knn as a wrapper classifier
+for (j in 2:50) {
+  ret <- selectFeature(data.ttest[,c(seq(1,400),16836)], features.ttest.svm, "svm")
+  selected.i <- ret[[1]]
+  current.best.acc <- ret[[2]]
+  cat(j, selected.i, ': ', current.best.acc, '\n')
+
+  # add the best feature from current run
+  features.ttest.svm <- c(features.ttest.svm, selected.i)
+  
+  svm.forward.acc <- c(svm.forward.acc, current.best.acc)
+}
+
+plot(seq(2:50), svm.forward.acc)
 ```
 
 
 
 
 
+
+
+# Rank t-test and order features for selection
+```{r}
+data.byClass <- split(data.numeric, y)
+
+feature.pvalues <- c()
+for(i in 1:(ncol(data.numeric))) {
+  feature.pvalues <- c(feature.pvalues, t.test(data.byClass[[1]][,i], data.byClass[[2]][,i])$p.value)
+}
+
+names(feature.pvalues) <- colnames(data.numeric)
+
+# no small value of t-stats
+ttest.filter.ind <- which(feature.pvalues>0.05)
+
+ttest.feature.ind.ordered = order(feature.pvalues)
+
+data.ttest <- data.numeric[,ttest.feature.ind.ordered]
+data.ttest['label'] = as.matrix(y)
+```
+
+
+## Logistic Regression using ttest filtered features
+```{r warning=FALSE}
+lr.acc.train.t <- c()
+lr.acc.val.t <- c()
+y.ind = which(names(data.ttest)=='label')
+feature.no <- seq(1,20)
+
+for (f in feature.no) {
+  lr.acc.train <- c()
+  lr.acc.val <- c()
+  
+  for(i in 1:length(fold)){
+    train.df = data.ttest[!cv.377==i, c(seq(1,f), 16836)]
+    val.df = data.ttest[cv.377==i, c(seq(1,f), 16836)]
+    y.ind = which(names(train.df)=='label')
+    
+    logistic.model <- glm(label ~ .  , data = train.df, family = binomial(link = 'logit'))
+    lr.pred.train <- ifelse(predict(logistic.model, train.df) > 0.5, 1, 0)
+    lr.pred.val <- ifelse(predict(logistic.model, val.df) > 0.5, 1, 0)
+    lr.acc.train <- c(lr.acc.train, acc(lr.pred.train, train.df[,y.ind]))
+    lr.acc.val <- c(lr.acc.val, acc(lr.pred.val, val.df[,y.ind]))
+  }
+  lr.acc.train.t <- c(lr.acc.train.t, mean(lr.acc.train))
+  lr.acc.val.t <- c(lr.acc.val.t, mean(lr.acc.val))
+}
+```
+
+
+
+
+## SVM linear kernel
+```{r}
+feature.no <- seq(90, 150, length = 10)
+svm.cost <- c(0.001, 0.01, 0.1, 0.3)
+svm.acc.n <- length(svm.cost)
+svm.acc.m <- length(feature.no)
+svm.acc.train.t <- matrix(rep(0, svm.acc.m*svm.acc.n), svm.acc.n, svm.acc.m)
+svm.acc.val.t <- matrix(rep(0, svm.acc.m*svm.acc.n), svm.acc.n, svm.acc.m)
+
+for (f in 1:length(feature.no)) {
+  lr.acc.train <- c()
+  lr.acc.val <- c()
+  svm.acc.train <- c()
+  svm.acc.val <- c()
+  rf.acc.train <- c()
+  rf.acc.val <- c()
+  for (c in 1:length(svm.cost)) {
+    for(i in 1:length(fold)){
+      train.df = data.ttest[!cv.377==i, c(seq(1,feature.no[f]),16836)]
+      val.df = data.ttest[cv.377==i, c(seq(1,feature.no[f]),16836)]
+      y.ind = which(names(train.df)=='label')
+      
+      svm.model <- svm(x=train.df[,-y.ind], y=train.df[,y.ind],  kernel="linear", type="C-classification", cost = svm.cost[c])
+      svm.pred.train <- predict(svm.model, train.df[,-y.ind])
+      svm.pred.val <- predict(svm.model, val.df[,-y.ind])
+      svm.acc.train <- c(svm.acc.train, acc(svm.pred.train, train.df[,y.ind]))
+      svm.acc.val <- c(svm.acc.val, acc(svm.pred.val, val.df[,y.ind]))
+    }
+    svm.acc.train.t[c,f] <- mean(svm.acc.train)
+    svm.acc.val.t[c,f] <- mean(svm.acc.val)
+  }
+}
+```
+
+## SVM radial kernel
+```{r}
+svm.cost <- c(0.01, 0.1, 0.3, 0.7, 1)
+svm.acc.n <- length(svm.cost)
+svm.acc.m <- length(feature.no)
+svm.acc.train.t.radial <- matrix(rep(0, svm.acc.m*svm.acc.n), svm.acc.n, svm.acc.m)
+svm.acc.val.t.radial <- matrix(rep(0, svm.acc.m*svm.acc.n), svm.acc.n, svm.acc.m)
+
+for (f in 1:length(feature.no)) {
+  lr.acc.train <- c()
+  lr.acc.val <- c()
+  svm.acc.train <- c()
+  svm.acc.val <- c()
+  rf.acc.train <- c()
+  rf.acc.val <- c()
+  for (c in 1:length(svm.cost)) {
+    for(i in 1:length(fold)){
+      train.df = data.ttest[!cv.377==i, c(seq(1,feature.no[f]),16836)]
+      val.df = data.ttest[cv.377==i, c(seq(1,feature.no[f]),16836)]
+      y.ind = which(names(train.df)=='label')
+      
+      svm.model <- svm(x=train.df[,-y.ind], y=train.df[,y.ind],  kernel="radial", type="C-classification", cost = svm.cost[c])
+      svm.pred.train <- predict(svm.model, train.df[,-y.ind])
+      svm.pred.val <- predict(svm.model, val.df[,-y.ind])
+      svm.acc.train <- c(svm.acc.train, acc(svm.pred.train, train.df[,y.ind]))
+      svm.acc.val <- c(svm.acc.val, acc(svm.pred.val, val.df[,y.ind]))
+    }
+    svm.acc.train.t.radial[c,f] <- mean(svm.acc.train)
+    svm.acc.val.t.radial[c,f] <- mean(svm.acc.val)
+  }
+}
+```
+
+
+```{r warning=FALSE}
+rf.acc.train.t <- c()
+rf.acc.val.t <- c()
+
+for (f in feature.no) {
+  rf.acc.train <- c()
+  rf.acc.val <- c()
+  
+  for(i in 1:length(fold)){
+    train.df = data.ttest[!cv.377==i, c(seq(1,f),16836)]
+    val.df = data.ttest[cv.377==i, c(seq(1,f),16836)]
+    y.ind = which(names(train.df)=='label')
+    
+    rf.model <- randomForest(label ~ ., data=train.df, importance=TRUE, mtry=round(f^0.5))
+    rf.pred.train <- ifelse(predict(rf.model, train.df)>0.5, 1, 0)
+    rf.pred.val <- ifelse(predict(rf.model, val.df)>0.5, 1, 0)
+    rf.acc.train <- c(rf.acc.train, acc(rf.pred.train, train.df[,y.ind]))
+    rf.acc.val <- c(rf.acc.val, acc(rf.pred.val, val.df[,y.ind]))
+  }
+  
+  rf.acc.train.t <- c(rf.acc.train.t, mean(rf.acc.train))
+  rf.acc.val.t <- c(rf.acc.val.t, mean(rf.acc.val))
+}
+```
+
+
+```{r}
+# plot(feature.no, lr.acc.val.t)
+# cat('feature no for logistic regression')
+# feature.no[which.max(lr.acc.val.t)]
+# max(lr.acc.val.t)
+
+plot(feature.no, svm.acc.val.t[1,], type = 'l')
+lines(feature.no, svm.acc.val.t[2,], col = 'red')
+lines(feature.no, svm.acc.val.t[3,], col = 'blue')
+cat('feature no for linear kernel')
+feature.no[which.max(svm.acc.val.t)/length(svm.cost)+1]
+cat('cost for linear kernal')
+svm.cost[which.max(svm.acc.val.t)%%length(svm.cost)+1]
+max(svm.acc.val.t)
+
+# plot(feature.no, svm.acc.val.t.radial[1,], type = 'l')
+# lines(feature.no, svm.acc.val.t.radial[2,], col = 'red')
+# lines(feature.no, svm.acc.val.t.radial[3,], col = 'blue')
+# cat('feature no for radial kernel')
+# feature.no[which.max(svm.acc.val.t.radial)/length(svm.cost)+1]
+# cat('cost for radial kernal')
+# svm.cost[which.max(svm.acc.val.t.radial)%%length(svm.cost)+1]
+# max(svm.acc.val.t.radial)
+# 
+# 
+# plot(feature.no, rf.acc.val.t)
+# cat('feature no for random forest')
+# feature.no[which.max(rf.acc.val.t)]
+# max(rf.acc.val.t)
+
+```
+
+
+
+
+
+SEX
