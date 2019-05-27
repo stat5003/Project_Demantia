@@ -2,19 +2,14 @@
 title: "STAT5003Assignment1"
 author: "Group 10"
 date: "26/04/2019"
-output: html_document
----
-
----
-title: "STAT5003 Assignment1"
-output: html_document
+output: html_notebook
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 ### Initialize
-```{r}
+```{r warning=FALSE}
 library(ggplot2)
 theme_update(plot.title = element_text(hjust = 0.5))
 
@@ -244,9 +239,9 @@ Save cv and y values before filtering steps for later stage usage
 
 ```{r}
 # save cv info
-cv.377 <- data.filter1['cv']
+cv.377 <- data.final['cv']
 # save y values
-y <- as.matrix(data.filter1['act_demented'])
+y <- as.matrix(data.final['act_demented'])
 ```
 
 1. remove columns with more than 250 0s. 
@@ -255,9 +250,9 @@ About 1.5k features are removed using this rule.
 
 ```{r}
 # Check if there is any 0 columns
-ind.zero <- which(colSums(dataF==0)>250)
+ind.zero <- which(colSums(data.final==0)>250)
 data.filter1 <- data.final[, -ind.zero]
-sum(colSums(dataFF)==0)
+sum(colSums(data.final)==0)
 dim(data.filter1)
 ```
 
@@ -416,9 +411,9 @@ data.ttest['label'] = as.factor(y)
 
 #### Logistic Regression using features selected by t-test
 
-```{r}
+```{r warning=FALSE}
 y.ind = which(names(data.ttest)=='label')
-feature.no <- seq(1,20)
+feature.no <- seq(1,101, length = 20)
 
 lr.acc.train.t <- c()
 lr.acc.val.t <- c()
@@ -437,8 +432,8 @@ for (f in feature.no) {
   rf.acc.val <- c()
   
   for(i in 1:length(fold)){
-    train.df = pca.df[!cv.377==i, c(seq(1,f),16836)]
-    val.df = pca.df[cv.377==i, c(seq(1,f),16836)]
+    train.df = data.ttest[!cv.377==i, c(seq(1,f),16836)]
+    val.df = data.ttest[cv.377==i, c(seq(1,f),16836)]
     y.ind = which(names(train.df)=='label')
     
     logistic.model <- glm(label ~ .  , data = train.df, family = binomial(link = 'logit'))
@@ -488,7 +483,7 @@ max(rf.acc.val.t)
 ```
 
 
-#### Forward wrapper approach for feature selection
+### Forward wrapper approach for feature selection
 
 ```{r}
 selectFeature <- function(df, features, mode) {
@@ -529,10 +524,10 @@ selectFeature <- function(df, features, mode) {
 #### Forward stepwise + PCA + Logistic Regression
 
 ```{r warning=FALSE}
-features.pca.lr <- c('PC1', 'label')
+features.pca.lr <- c('label')
 forward.pca.lr.acc <- c()
 
-for (j in 2:50) {
+for (j in 1:50) {
   ret <- selectFeature(pca.df, features.pca.lr, "lr")
   selected.i <- ret[[1]]
   current.best.acc <- ret[[2]]
@@ -543,16 +538,16 @@ for (j in 2:50) {
   forward.pca.lr.acc <- c(forward.pca.lr.acc, current.best.acc)
 }
 
-plot(seq(2,50), forward.pca.lr.acc)
+plot(seq(1,50), forward.pca.lr.acc)
 ```
 
 #### Forward stepwise + PCA + SVM
 
 ```{r}
-features.pca.svm <- c('PC1', 'label')
+features.pca.svm <- c('label')
 forward.pca.svm.acc <- c()
 
-for (j in 2:30) {
+for (j in 1:30) {
   ret <- selectFeature(pca.df, features.pca.svm, "svm")
   selected.i <- ret[[1]]
   current.best.acc <- ret[[2]]
@@ -563,17 +558,17 @@ for (j in 2:30) {
   forward.pca.svm.acc <- c(forward.pca.svm.acc, current.best.acc)
 }
 
-plot(seq(2:30), forward.pca.svm.acc)
+plot(seq(1,30), forward.pca.svm.acc)
 
 ```
 
 #### Forward stepwise + t-test + Logistic Regression
 
 ```{r}
-features.ttest.lr = c('label', names(data.ttest)[1])
+features.ttest.lr = c('label')
 forward.t.lr.acc <- c()
 
-for (j in 2:30) {
+for (j in 1:30) {
   ret <- selectFeature(data.ttest[,c(seq(1,400),16836)], features.ttest.lr, "lr")
   selected.i <- ret[[1]]
   current.best.acc <- ret[[2]]
@@ -584,34 +579,157 @@ for (j in 2:30) {
   forward.t.lr.acc <- c(forward.t.lr.acc, current.best.acc)
 }
 
-plot(seq(2,30), forward.t.lr.acc)
+plot(seq(1,30), forward.t.lr.acc)
 ```
 
 #### Forward stepwise + t-test + SVM
 
 ```{r}
-features.ttest.svm = c('label', names(data.ttest)[1])
+features.ttest.svm = c('label')
 
 forward.t.svm.acc <- c()
 
-# select the 2 to 10 best features using knn as a wrapper classifier
-for (j in 2:50) {
+for (j in 1:30) {
   ret <- selectFeature(data.ttest[,c(seq(1,400),16836)], features.ttest.svm, "svm")
   selected.i <- ret[[1]]
   current.best.acc <- ret[[2]]
   cat(j, selected.i, ': ', current.best.acc, '\n')
 
-  # add the best feature from current run
   features.ttest.svm <- c(features.ttest.svm, selected.i)
   
   forward.t.svm.acc <- c(forward.t.svm.acc, current.best.acc)
 }
 
-plot(seq(2:50), forward.t.svm.acc)
+plot(seq(1:30), forward.t.svm.acc)
+
+```
+
+### Model tuning
+
+#### Tuning SVM cost parameter
+```{r}
+pca.svm.best.features <- features.pca.svm
+tuned.para.pca <- tune.svm(label~., data=pca.df[,pca.svm.best.features], gamma = 10^(-5:-1), cost=10^(-3:1))
+tuned.para.pca$best.parameters
+
+
+ttest.svm.best.features <- features.ttest.svm[1:11]
+tuned.para.ttest <- tune.svm(label~., data=data.ttest[,ttest.svm.best.features], gamma = 10^(-5:-1), cost=10^(-3:1))
+tuned.para.ttest$best.parameters
 
 ```
 
 
+```{r}
+getValResults <- function(df, features, mode){
+  pred.result <- c()
+  for(cv in 1:length(fold)){
+    train = df[!cv.377==cv, features]
+    test = df[cv.377==cv, features]
+    
+    if(mode == "svm"){
+      y.ind = which(colnames(train)=='label')
+      svm.model <- svm(x=train[,-y.ind], y=train[,y.ind],  kernel="linear", type="C-classification", cost = 0.1)
+      pred <- as.numeric(predict(svm.model, test[,-y.ind]))-1
+      
+    }
+    else if(mode == "lr"){
+      logistic.model <- glm(label ~ .  , data = train, family = binomial(link = 'logit'))
+      pred <- ifelse(predict(logistic.model, test) > 0.5, 1, 0)
+    }
+    
+    pred.result <- c(pred.result, pred)
+  }
+  as.factor(pred.result)
+}
+```
+
+
+```{r}
+library(ROCR)
+
+rocplot = function(pred, truth, main){
+  predob = prediction (pred, truth)
+  perf = performance(predob, "tpr", "fpr")
+  plot(perf)
+  title(main)
+}
+
+## create a wrapper function for evaluation
+evaluate <- function(pred, y) {
+  TN <- sum((pred==y)[pred==0])
+  FP <- sum((pred!=y)[pred==1])
+  TP <- sum((pred==y)[pred==1])
+  FN <- sum((pred!=y)[pred==0])
+  
+  acc <- sum(pred==y)/length(y)
+  Se <- TP/(TP+FN)
+  Sp <- TN/(FP+TN)
+  F1 <- 2*TP/(2*TP+FP+FN)
+  Gmean <- sqrt((TP/(TP+FN))*(TP/(TP+FP)))
+    
+  cat(c("acc:", round(acc, digits=3)))
+  cat(" ")
+  
+  cat(c("sen:", round(Se, digits=3)))
+  cat(" ")
+  
+  cat(c("spec:", round(Sp, digits=3)))
+  cat(" ")
+  
+  cat(c("F1:", round(F1, digits=3)))
+  cat(" ")
+
+  cat(c("GM:", round(Gmean, digits=3)))
+  cat(" ")
+}
+```
+
+
+```{r}
+y.sortedbycv <- c()
+for(cv in 1:length(fold)){
+  y.sortedbycv <- c(y.sortedbycv, y[cv.377==cv])
+}
+y.cv.factor <- as.factor(y.sortedbycv)
+
+pca.lr.best.features <- features.pca.lr[1:25]
+pca.lr.pred <- getValResults(pca.df, pca.lr.best.features, "lr")
+cat("PCA + LR Evaluation: \n")
+#confusionMatrix(y, pca.lr.pred)
+evaluate(y.cv.factor, pca.lr.pred)
+
+pca.svm.best.features <- features.pca.svm
+pca.svm.pred <- getValResults(pca.df, pca.svm.best.features, "svm")
+cat("\nPCA + SVM Evaluation: \n")
+#confusionMatrix(y, pca.svm.pred)
+evaluate(y.cv.factor, pca.svm.pred)
+
+ttest.lr.best.features <- features.ttest.lr[1:14]
+ttest.lr.pred <- getValResults(data.ttest, ttest.lr.best.features, "lr")
+cat("\nt-test + LR Evaluation: \n")
+#confusionMatrix(y, ttest.lr.pred)
+evaluate(y.cv.factor, ttest.lr.pred)
+
+ttest.svm.best.features <- features.ttest.svm[1:11]
+ttest.svm.pred <- getValResults(data.ttest, ttest.svm.best.features, "svm")
+cat("\nt-test + SVM Evaluation: \n")
+#confusionMatrix(y, ttest.svm.pred)
+evaluate(y.cv.factor, ttest.svm.pred)
+
+```
+
+
+```{r}
+rocplot(as.numeric(pca.lr.pred), as.numeric(y.cv.factor), main = "ROC: PCA + LR + Forward Stepwise")
+
+rocplot(as.numeric(pca.svm.pred), as.numeric(y.cv.factor), main = "ROC: PCA + SVM + Forward Stepwise")
+
+rocplot(as.numeric(ttest.lr.pred), as.numeric(y.cv.factor), main = "ROC: T-test + LR + Forward Stepwise")
+
+rocplot(as.numeric(ttest.svm.pred), as.numeric(y.cv.factor), main = "ROC: T-test + SVM + Forward Stepwise")
+
+```
 
 
 
@@ -649,11 +767,12 @@ pca.sex.df['label']=as.factor(sex)
 ggplot(pca.sex.df, aes(PC1, PC2, colour = label)) + geom_point()
 ```
 
+PCA + LR + Forward stepwise
 ```{r warning=FALSE}
-features.sex.pca.lr <- c('PC1', 'label')
+features.sex.pca.lr <- c('label')
 forward.sex.pca.lr.acc <- c()
 
-for (j in 2:10) {
+for (j in 1:10) {
   ret <- selectFeature(pca.sex.df, features.sex.pca.lr, "lr")
   selected.i <- ret[[1]]
   current.best.acc <- ret[[2]]
@@ -664,38 +783,125 @@ for (j in 2:10) {
   forward.sex.pca.lr.acc <- c(forward.sex.pca.lr.acc, current.best.acc)
 }
 
-# plot(seq(2,10), forward.sex.pca.lr.acc)
+plot(seq(1,10), forward.sex.pca.lr.acc)
 ```
+
+PCA + SVM + Forward stepwise
+```{r warning=FALSE}
+features.sex.pca.svm <- c('label')
+forward.sex.pca.svm.acc <- c()
+
+for (j in 1:10) {
+  ret <- selectFeature(pca.sex.df, features.sex.pca.svm, "lr")
+  selected.i <- ret[[1]]
+  current.best.acc <- ret[[2]]
+  cat(j, selected.i, ': ', current.best.acc, '\n')
+
+  features.sex.pca.svm <- c(features.sex.pca.svm, selected.i)
+  
+  forward.sex.pca.svm.acc <- c(forward.sex.pca.svm.acc, current.best.acc)
+}
+
+plot(seq(1,10), forward.sex.pca.svm.acc)
+```
+
 
 ```{r}
 ttest.feature.ind.ordered = order(feature.pvalues)
-data.ttest <- sex.data[,ttest.feature.ind.ordered]
-data.ttest['label'] = as.factor(sex)
+sex.ttest.df <- sex.data[,ttest.feature.ind.ordered]
+sex.ttest.df['label'] = as.factor(sex)
 ```
 
-# t-test + SVM + Forward stepwise
-```{r}
-features.ttest.svm = c('label')
 
-svm.forward.acc <- c()
+# t-test + LR + Forward stepwise
+```{r warning=FALSE}
+features.sex.lr.t = c('label')
+
+forward.sex.t.lr.acc <- c()
 
 # select the 2 to 10 best features using knn as a wrapper classifier
 for (j in 1:3) {
-  ret <- selectFeature(data.ttest[,c(seq(1,400),35188)], features.ttest.svm, "svm")
+  ret <- selectFeature(sex.ttest.df[,c(seq(1,400),35188)], features.sex.lr.t, "lr")
   selected.i <- ret[[1]]
   current.best.acc <- ret[[2]]
   cat(j, selected.i, ': ', current.best.acc, '\n')
 
   # add the best feature from current run
-  features.ttest.svm <- c(features.ttest.svm, selected.i)
+  features.sex.lr.t <- c(features.sex.lr.t, selected.i)
   
-  svm.forward.acc <- c(svm.forward.acc, current.best.acc)
+  forward.sex.t.lr.acc <- c(forward.sex.t.lr.acc, current.best.acc)
 }
 
-plot(seq(1:3), svm.forward.acc)
+plot(seq(1:3), forward.sex.t.lr.acc)
+
+```
+
+# t-test + SVM + Forward stepwise
+```{r}
+features.sex.svm.t = c('label')
+
+forward.sex.t.svm.acc <- c()
+
+# select the 2 to 10 best features using knn as a wrapper classifier
+for (j in 1:3) {
+  ret <- selectFeature(sex.ttest.df[,c(seq(1,400),35188)], features.sex.svm.t, "svm")
+  selected.i <- ret[[1]]
+  current.best.acc <- ret[[2]]
+  cat(j, selected.i, ': ', current.best.acc, '\n')
+
+  # add the best feature from current run
+  features.sex.svm.t <- c(features.sex.svm.t, selected.i)
+  
+  forward.sex.t.svm.acc <- c(forward.sex.t.svm.acc, current.best.acc)
+}
+
+plot(seq(1:3), forward.sex.t.svm.acc)
 
 ```
 
 
+```{r warning=FALSE}
+sex.sortedbycv <- c()
+for(cv in 1:length(fold)){
+  sex.sortedbycv <- c(sex.sortedbycv, sex[cv.377==cv])
+}
+sex.cv.factor <- as.factor(sex.sortedbycv)
+
+pca.lr.best.features <- features.sex.pca.lr[1:9]
+pca.lr.pred <- getValResults(pca.sex.df, pca.lr.best.features, "lr")
+cat("PCA + LR Evaluation: \n")
+#confusionMatrix(y, pca.lr.pred)
+evaluate(sex.cv.factor, pca.lr.pred)
+
+pca.svm.best.features <- features.sex.pca.svm[1:10]
+pca.svm.pred <- getValResults(pca.sex.df, pca.svm.best.features, "svm")
+cat("\nPCA + SVM Evaluation: \n")
+#confusionMatrix(y, pca.svm.pred)
+evaluate(sex.cv.factor, pca.svm.pred)
+
+ttest.lr.best.features <- features.sex.lr.t[1:2]
+ttest.lr.pred <- getValResults(sex.ttest.df, features.sex.lr.t, "lr")
+cat("\nt-test + LR Evaluation: \n")
+#confusionMatrix(y, ttest.lr.pred)
+evaluate(sex.cv.factor, ttest.lr.pred)
+
+ttest.svm.best.features <- features.sex.svm.t[1:2]
+ttest.svm.pred <- getValResults(sex.ttest.df, features.sex.svm.t, "svm")
+cat("\nt-test + SVM Evaluation: \n")
+#confusionMatrix(y, ttest.svm.pred)
+evaluate(sex.cv.factor, ttest.svm.pred)
+```
+
+
+```{r}
+rocplot(as.numeric(pca.lr.pred), as.numeric(sex.cv.factor), main = "ROC: PCA + LR + Forward Stepwise")
+
+rocplot(as.numeric(pca.svm.pred), as.numeric(sex.cv.factor), main = "ROC: PCA + SVM + Forward Stepwise")
+
+rocplot(as.numeric(ttest.lr.pred), as.numeric(sex.cv.factor), main = "ROC: T-test + LR + Forward Stepwise")
+
+rocplot(as.numeric(ttest.svm.pred), as.numeric(sex.cv.factor), main = "ROC: T-test + SVM + Forward Stepwise")
+
+```
 
 
